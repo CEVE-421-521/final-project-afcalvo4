@@ -1,0 +1,98 @@
+---
+title: "Final Project Report"
+author: "Your Name (NetID)"
+jupyter: julia-1.10
+date: 2024-04-30
+
+# YOU DO NOT NEED BOTH PDF AND DOCX.
+# COMMENT OR DELETE THE ONE YOU DON'T WANT TO USE.
+#
+# Feel free to customize the look of your final document:
+# https://quarto.org/docs/reference/formats/pdf.html
+# https://quarto.org/docs/reference/formats/docx.html
+
+format: 
+    pdf:
+        documentclass: article
+        fontsize: 11pt
+        geometry:
+            - margin=1in  
+        number-sections: true
+        code-line-numbers: true
+    # docx: 
+    #    toc: true
+    #    fig-format: png
+    #    number-sections: true
+    #    code-line-numbers: true
+
+date-format: "ddd., MMM. D"
+
+# See Quarto docs: https://quarto.org/docs/authoring/footnotes-and-citations.html
+# you can export your references from Zotero, EndNote, or other reference managers
+# from Zotero you'll need https://retorque.re/zotero-better-bibtex/
+references: references.bib
+
+# recommended, but not required
+# you will need jupyter-cache installed
+execute: 
+  cache: true
+---
+
+# Introduction
+
+## Problem Statement
+
+Clearly define the problem statement that your chosen feature aims to address.
+Explain the significance of this problem in the context of climate risk management.
+
+## Selected Feature
+
+Describe the feature you have selected to add to the existing decision-support tool.
+Discuss how this feature relates to the problem statement and its potential to improve climate risk assessment.
+
+# Literature Review
+
+Provide a brief overview of the theoretical background related to your chosen feature.
+Cite at least two relevant journal articles to support your approach (see [Quarto docs](https://quarto.org/docs/authoring/footnotes-and-citations.html) for help with citations).
+Explain how these articles contribute to the justification of your selected feature.
+
+# Methodology
+
+## Implementation
+
+You should make your modifications in either the `HouseElevation` or `ParkingGarage` module.
+Detail the steps taken to implement the selected feature and integrate it into the decision-support tool.
+Include code snippets and explanations where necessary to clarify the implementation process.
+
+## Validation
+
+As we have seen in labs, mistakes are inevitable and can lead to misleading results.
+To minimize the risk of errors making their way into final results, it is essential to validate the implemented feature.
+Describe the validation techniques used to ensure the accuracy and reliability of your implemented feature.
+Discuss any challenges faced during the validation process and how they were addressed.
+
+# Results
+
+Present the results obtained from the enhanced decision-support tool.
+Use tables, figures, and visualizations to clearly communicate the outcomes.
+Provide sufficient detail to demonstrate how the implemented feature addresses the problem statement.
+Use the `#| output: false` and/or `#| echo: false` tags to hide code output and code cells in the final report except where showing the output (e.g.g, a plot) or the code (e.g., how you are sampling SOWs) adds value to the discussion.
+You may have multiple subsections of results, which you can create using `##`.
+
+# Conclusions
+
+## Discussion
+
+Analyze the implications of your results for climate risk management.
+Consider the context of the class themes and discuss how your findings contribute to the understanding of climate risk assessment.
+Identify any limitations of your approach and suggest potential improvements for future work.
+
+## Conclusions
+
+Summarize the key findings of your project and reiterate the significance of your implemented feature in addressing the problem statement.
+Discuss the broader implications of your work for climate risk management and the potential for further research in this area.
+
+# References
+
+:::{#refs}
+:::

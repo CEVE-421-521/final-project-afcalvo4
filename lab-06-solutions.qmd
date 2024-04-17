@@ -1,0 +1,235 @@
+---
+title: "Lab 6 Solutions"
+author: "CEVE 421-521"
+jupyter: julia-1.10
+date: 2024-04-04
+
+format: 
+    html: default
+
+    # YOU DO NOT NEED BOTH PDF AND DOCX.
+    # COMMENT OR DELETE THE ONE YOU DON'T WANT TO USE.
+    pdf:
+        documentclass: article
+        fontsize: 11pt
+        geometry:
+            - margin=1in  
+        number-sections: true
+        code-line-numbers: true
+    # docx: 
+    #    toc: true
+    #    fig-format: png
+    #    number-sections: true
+    #    code-line-numbers: true
+
+date-format: "ddd., MMM. D"
+references: references.bib
+
+# recommended, but not required
+# you will need jupyter-cache installed
+execute: 
+  cache: true
+---
+
+# Setup
+
+
+```{julia}
+using CSV
+using DataFrames
+using DataFramesMeta
+using Distributions
+using LaTeXStrings
+using Metaheuristics
+using Plots
+using Random
+using Unitful
+
+Plots.default(; margin=5Plots.mm)
+```
+
+We also load our local package as in lab 5.
+
+```{julia}
+using Revise
+using HouseElevation
+```
+
+# States of the world
+
+We begin by defining the variables that don't change from one SOW to the next.
+We load these into the `ModelParams`.
+
+```{julia}
+#| output: false
+house = let
+    haz_fl_dept = CSV.read("data/haz_fl_dept.csv", DataFrame) # read in the file
+    desc = "one story, Contents, fresh water, short duration"
+    row = @rsubset(haz_fl_dept, :Description == desc)[1, :] # select the row I want
+    area = 500u"ft^2"
+    height_above_gauge = 12u"ft"
+    House(row; area=area, height_above_gauge=height_above_gauge, value_usd=250_000)
+end
+
+p = ModelParams(; house=house, years=2024:2083)
+```
+
+Next we define how we will sample the states of the world.
+
+```{julia}
+#| output: false
+slr_scenarios = let
+    df = CSV.read("data/slr_oddo.csv", DataFrame)
+    [Oddo17SLR(a, b, c, tstar, cstar) for (a, b, c, tstar, cstar) in eachrow(df)]
+end
+
+function draw_surge_distribution()
+    μ = rand(Normal(5, 1))
+    σ = rand(Exponential(1.25))
+    ξ = rand(Normal(0.1, 0.05))
+    return GeneralizedExtremeValue(μ, σ, ξ)
+end
+
+function draw_discount_rate()
+    return rand(Normal(0.05, 0.03))
+end
+
+function draw_sow()
+    slr = rand(slr_scenarios)
+    surge_params = draw_surge_distribution()
+    discount = draw_discount_rate()
+    return SOW(slr, surge_params, discount)
+end
+```
+
+Finally we can sample the SOWs
+
+```{julia}
+#| output: false
+Random.seed!(421521)
+N_SOW = 10_000
+N_SOW_opt = 10 # to start
+sows = [draw_sow() for _ in 1:N_SOW]
+sows_opt = first(sows, N_SOW_opt)
+```
+
+# Optimization
+
+## Bounds
+
+We have a single decision variable, the height of the house above the ground.
+This can be any real number between 0 and 14 feet.
+
+```{julia}
+bounds = boxconstraints(; lb=[0.0], ub=[14.0])
+```
+
+## Objective function
+
+We next need an objective function.
+Recall that we want to _maximize_ NPV, but the optimization package we are using is set up to _minimize_.
+
+```{julia}
+function objective_function(Δh::Vector{Float64})
+    a = Action(Δh[1])
+    npvs = [run_sim(a, sow, p) for sow in sows_opt]
+    return -mean(npvs)
+end
+```
+
+## Running
+
+We can throw this straight into the `optimize` function:
+
+```{julia}
+result = optimize(objective_function, bounds)
+```
+
+We can view the minimum of the objective function with
+
+```{julia}
+minimum(result)
+```
+
+and the value of the decision variable that achieves that minimum with:
+
+```{julia}
+minimizer(result)
+```
+
+This seems like it's working plausibly.
+Let's try now with more SOWs.
+
+```{julia}
+N_SOW_opt = 100
+sows_opt = first(sows, N_SOW_opt)
+```
+
+Since I'm using more SOWs here, I'll also increase the time limit for the optimization to three minutes.
+
+```{julia}
+options = Options(; time_limit=180.0, f_tol_rel=10.0)
+```
+
+To use options, we have to choose an algorithm.
+See list of algorithms [here](https://jmejia8.github.io/Metaheuristics.jl/stable/algorithms/).
+The `ECA` algorithm is suggested as a default, so we'll use that.
+
+```{julia}
+algorithm = ECA(; options=options)
+```
+
+Before we run the optimization, let's set a random seed.
+This will make our results more reproducible.
+We can then vary the seed to see how sensitive our results are to the random seed.
+
+```{julia}
+Random.seed!(421521)
+result = optimize(objective_function, bounds, algorithm)
+```
+
+We can view our result with
+
+```{julia}
+display(minimum(result))
+display(minimizer(result))
+```
+
+# Validation
+
+In this case, we don't really _need_ optimization -- we can use brute force.
+We can compare by plotting the objective function for a range of elevations (from 0 to 14 ft) using all SOWs.
+
+```{julia}
+#| output: false
+elevations_try = 0:0.5:14
+actions_try = Action.(elevations_try)
+
+N_more = 500
+npvs_opt = [mean([run_sim(a, sow, p) for sow in sows_opt]) for a in actions_try]
+npvs_moore = [
+    mean([run_sim(a, sow, p) for sow in first(sows, N_more)]) for a in actions_try
+]
+```
+
+and plot
+
+```{julia}
+plot(
+    elevations_try,
+    npvs_opt ./ 1000;
+    xlabel="Elevation [ft]",
+    ylabel="NPV [1000 USD]",
+    label="First $(N_SOW_opt) SOWs",
+    marker=:circle,
+)
+plot!(elevations_try, npvs_moore ./ 1000; label="First $(N_more) SOWs", marker=:circle)
+vline!([minimizer(result)]; label="Optimal", linestyle=:dash)
+```
+
+Key insights:
+
+1. Our optimization appears to be working well, and maximizes the blue curve as it should
+1. There is a substantial difference between the blue and red lines, indicating that using different SOWs (from the same distribution!) can make a big difference
+1. Going from zero (don't elevate) to a small elevation is always bad, as you gain little flood protection but have to pay the fixed costs of elevation
+1. The optimal elevation is highly sensitive to assumptions about the SOWs
