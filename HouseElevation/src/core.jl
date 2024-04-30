@@ -25,3 +25,33 @@ function Action(Δh::T) where {T<:Unitful.Length}
     Δh_ft = ustrip(u"ft", Δh)
     return Action(Δh_ft)
 end
+
+# BuildingState x is a state variable that saves each time step information
+mutable struct BuildingState{T<:AbstractFloat}
+    elevation::T
+    year::Int
+    MSL::T
+    Damage::T
+    max_level::T
+end
+
+# The function is inicialized in zeros except for the year in 1
+function BuildingState()
+    return BuildingState(0.0, 1, 0.0, 0.0, 0.0)
+end
+
+# The building action is an elevation increment Δ
+struct BuildingAction
+    Δelevation::AbstractFloat
+end
+
+# Two types of abstract policies are defined
+abstract type AbstractPolicy end
+# The proactive policy uses a Free-board distance to trigger a decision sequence
+struct ProactivePolicy <: AbstractPolicy
+    delta_min::AbstractFloat
+end
+# The reactive policy uses a year maximum water level to trigger a decision sequence
+struct ReactivePolicy <: AbstractPolicy
+    critical_level::AbstractFloat
+end

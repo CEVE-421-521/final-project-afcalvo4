@@ -6,6 +6,7 @@ include("core.jl")
 include("run_sim.jl")
 
 export DepthDamageFunction,
-    House, Oddo17SLR, elevation_cost, ModelParams, SOW, Action, run_sim
+
+    House, Oddo17SLR, elevation_cost, ModelParams, SOW, Action, run_sim, ProactivePolicy, ReactivePolicy, simulate
 
 end # module HouseElevation

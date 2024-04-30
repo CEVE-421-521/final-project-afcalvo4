@@ -1,17 +1,11 @@
 ---
 title: "Final Project Report"
-author: "Your Name (NetID)"
+author: "Andres Calvo (ac228)"
 jupyter: julia-1.10
 date: 2024-04-30
 
-# YOU DO NOT NEED BOTH PDF AND DOCX.
-# COMMENT OR DELETE THE ONE YOU DON'T WANT TO USE.
-#
-# Feel free to customize the look of your final document:
-# https://quarto.org/docs/reference/formats/pdf.html
-# https://quarto.org/docs/reference/formats/docx.html
-
-format: 
+format:
+    html: default
     pdf:
         documentclass: article
         fontsize: 11pt
@@ -19,78 +13,633 @@ format:
             - margin=1in  
         number-sections: true
         code-line-numbers: true
-    # docx: 
-    #    toc: true
-    #    fig-format: png
-    #    number-sections: true
-    #    code-line-numbers: true
 
 date-format: "ddd., MMM. D"
 
-# See Quarto docs: https://quarto.org/docs/authoring/footnotes-and-citations.html
-# you can export your references from Zotero, EndNote, or other reference managers
-# from Zotero you'll need https://retorque.re/zotero-better-bibtex/
-references: references.bib
+bibliography: references.bib
 
-# recommended, but not required
-# you will need jupyter-cache installed
-execute: 
-  cache: true
 ---
+```{julia}
+using Revise
+using HouseElevation
 
+using CSV
+using DataFrames
+using DataFramesMeta
+using Distributions
+using LaTeXStrings
+using Metaheuristics
+using Plots
+using PlotThemes
+using Random
+using Unitful
+using Extremes
+using StatsPlots
+
+Plots.default(; margin=5Plots.mm)
+theme(:dao, grid = false,
+           minorgrid = false,
+           tick_direction = :out,)
+```
 # Introduction
 
-## Problem Statement
+There is a great interest in modeling extreme weather events considering the large exposure of physical infrastructure, frequent occurrence of natural disaster and climate change. The sea level rise in particular is of the outmost interest for industrial communities located in hurricane prone regions such as Galveston and Houston @gori_accessibility_2020, @bernier_buckling_2019, @amini_probabilistic_2023. The present work leverages the class final project to consider sequential analysis of risk mitigation of industrial structures exposed to storm surges. Sequential actions (i.e. elevating) on structures can be performed by allowing state variables to evolve in time and a set of adaptive policies that trigger or not the mitigation decision. Closely based on the proposed work by Garner and Keller @garner_using_2018, two types of adaptive policies are considered and two profiles (respectively) are explored including the Do-nothing case. The two considered profiles are the proactive and reactive decision maker. The former is related to a decision profile where a trigger decision happens regardless of any perceived damage. In particular, the free-board height, the difference between the mean sea-level (MSL) and the inundation level of the building is used to define the triggering event (e.g. if a defined free-board of 3 ft is reach by the MSL of year t, an elevation a policy is trigger). This freeboard is based on the work by Davis et.al @davis_usace_2008. In contrast, a reactive policy is based on a given threshold (i.e. maximum water level in year t) that triggers a decision on elevating the building. The two profiles in addition to the Do-nothing case are analyzed. Different sources of uncertainty are considered including financial, physical and most importantly, the sea level rise.
 
-Clearly define the problem statement that your chosen feature aims to address.
-Explain the significance of this problem in the context of climate risk management.
+## Case study
 
-## Selected Feature
+The case study was chosen given the ongoing research on industrial structures in coastal communities in the US Gulf Coast. Therefore, a lightweight industrial building (i.e. warehouse) was selected in Galveston, Tx close to the port. The structure consists in a steel frame structure with a steel casing and roof. The exact use of the building is not known but some expensive machinery and contents are expected inside the building that are exposed to storm surges and to experiment damages. Figure 1 shows the building location and characteristics. The building is located 3100 ft apart from a NOOA methodological station and a sea level gauge in Pier 21 (station 8771450). The current elevation of the building respect to the gauge is close to 4 ft, nevertheless, this offset is going to be treated as a variable in order to compare different policies.
 
-Describe the feature you have selected to add to the existing decision-support tool.
-Discuss how this feature relates to the problem statement and its potential to improve climate risk assessment.
+![Figure 1](figure1.png)
 
-# Literature Review
+## Depth-Damage curve
 
-Provide a brief overview of the theoretical background related to your chosen feature.
-Cite at least two relevant journal articles to support your approach (see [Quarto docs](https://quarto.org/docs/authoring/footnotes-and-citations.html) for help with citations).
-Explain how these articles contribute to the justification of your selected feature.
+The damage of the structure is going to be assessed using a defined depth-damage curve (DDC) developed by Army Corps of Engineering (USACE) specifically for the Galveston context. In the HAZUS manual @fema_hazus_2022, the curves are applicable to freshwater flooding, under slow-rise, slow-recession and little velocity which is not the case of storm surges and hurricane surges in particular. Nevertheless, the USACE developed the curves given the Galveston exposure to tidal waves and hurricane storm surges, therefore, they are used in the present work. The “Average Light Industrial, Contents (Equipment/ Inventory)” DDC was selected from the available curves and is shown in Figure 2a. It was selected considering the equipment and contents that represent the largest portion of losses due to damages. The is large uncertainty in this model that is not manage or propagated. As explain by empirical big data @wing_new_2020, the losses in residential houses follow non-monotonically increasing functions and rather unexpected distributions (e.i. β distribution). Nevertheless, the DDC will be treated deterministically given that there is not available data to propagate the uncertainty. However, the DDC will not be a state variable and all simulations will be using the same DDC. This way, results will be consistent. The valuation of the building of 3’445.000 USD was done using commercial data from APX and a structure to content ratio of 1:8.
 
-# Methodology
+```{julia}
+#| code-fold: true
+offset = 4
+building = let
+    haz_fl_dept = CSV.read("data/haz_fl_dept.csv",DataFrame)
+    desc = "Average Light Industrial, Contents (Equipment/Inventory)"
+    row = @rsubset(haz_fl_dept, :Description == desc)[1,:]
+    area = 33_000u"ft^2"
+    height_above_gauge = (offset)u"ft"
+    House(
+        row;
+        area = area,
+        height_above_gauge = height_above_gauge,
+        value_usd = 4_000_000,
+        )
+end
+plot(building.ddf.itp[:],
+    xlabel = "Water level [ft]",
+    ylabel = "Damage [%]",
+    ylims = [0,100],
+    xlims = [0,20],
+    label = "Industrial building (USACE)",
+    legend = :bottomright,
+    size = (500, 400),
+    color = "orangered",
+    linewidth = 2,)
+```
+## Sea-Level model
 
-## Implementation
+The model proposed by Oddo et al. @oddo_deep_2020 is used to generate stochastic realizations of the sea-level paths from 2024 to the time horizon T. This model will be used to represent the mean-sea-level (MSL) of a given year. Variations within the year are not considered. There is no probabilistic information to suggest the frequency of each scenario or the probability of occurrence. Therefore, random sampling within a Monte Carlo simulation is used to considered the average effect of the sea level rise. This is considered valid within the exploratory modeling context of the present work. Some realizations and statistics of these are represented in Figure 2b.
 
-You should make your modifications in either the `HouseElevation` or `ParkingGarage` module.
-Detail the steps taken to implement the selected feature and integrate it into the decision-support tool.
-Include code snippets and explanations where necessary to clarify the implementation process.
+```{julia}
+#| code-fold: true
+#| output: false
+slr_scenarios = let
+    df = CSV.read("data/slr_oddo.csv", DataFrame)
+    [Oddo17SLR(a, b, c, tstar, cstar) for (a, b, c, tstar, cstar) in eachrow(df)]
+end
 
-## Validation
+case_scenarios = let
+    years = 1900:2150
+    s_level = zeros(size(slr_scenarios)[1],size(years)[1])
+    count = 1
+    for s in slr_scenarios
+        s_level[count,:] = s.(years)
+        count +=1
+    end
+    q_stat = [0.05, 0.25, 0.50, 0.75, 0.95]
+    scenarios = zeros(size(years)[1],size(q_stat)[1])
+    for q in 1:size(q_stat)[1]
+        scenarios[:,q] = [quantile(s_level[:,year],q_stat[q]) for year in 1:size(years)[1]]
+    end
+    scenarios
+end
+```
+```{julia}
+#| code-fold: true
+let 
+    years = 1900:2150
+    p = plot(;
+             xlabel = "Year",
+             ylabel = "Mean sea-level [ft]\nwith respect to the year 2000",
+             label = "Oddo et al. (2017)",
+             legend = :topleft,
+             size=(400, 400),)
+    s_average = years.*0
+    N_samples = 300
+    for s in rand(slr_scenarios,N_samples)
+        plot!(p,
+              years,
+              s.(years);
+              palette = :oslo,
+              alpha = 0.2,
+              linewidth = 0.5,
+              label = nothing,
+              )
+        s_average +=  s.(years)
+    end
+    s_average /= 300
 
-As we have seen in labs, mistakes are inevitable and can lead to misleading results.
-To minimize the risk of errors making their way into final results, it is essential to validate the implemented feature.
-Describe the validation techniques used to ensure the accuracy and reliability of your implemented feature.
-Discuss any challenges faced during the validation process and how they were addressed.
+    hline!([0]; color = "black", linewidth = 0.50, label = nothing)
+    hline!([offset]; color = "orangered", linewidth = 1, label = "Gauge offset", style = :dash)
+    vline!([2024]; color = "black", linewidth = 1, label = "Today", style = :dash)
+    vline!([2024+25]; color = "teal", linewidth = 1, label = "25 years", style = :dash)
+    vline!([2024+50]; color = "green", linewidth = 1, label = "50 years", style = :dash)
+    plot!(years,
+          s_average;
+          ylims = [-1,15],
+          color = "orangered",
+          label = "Average",
+          linewidth = 2,
+          )
 
-# Results
+    colors_p = ["paleturquoise3","teal","dodgerblue2","dodgerblue4","skyblue4"]
+    q_stat = [0.05, 0.25, 0.50, 0.75, 0.95]
+    for q in 1:size(q_stat)[1]
+    plot!(p,years,case_scenarios[:,q];
+          label = "$(q_stat[q] * 100)%",
+          linewidth = 2,
+          color = colors_p[q])
+    end
+    pl_det = plot(p;
+                  ylims = [0,7],
+                  ylabel = "Mean sea-level [ft]",
+                  xlims = [2020,2080],
+                  title = "Detail",
+                  legend = false)
+    
+    plot(p, pl_det, layout = 2,size = (800, 400))
+end
+```
+## Storm surge hazard
 
-Present the results obtained from the enhanced decision-support tool.
-Use tables, figures, and visualizations to clearly communicate the outcomes.
-Provide sufficient detail to demonstrate how the implemented feature addresses the problem statement.
-Use the `#| output: false` and/or `#| echo: false` tags to hide code output and code cells in the final report except where showing the output (e.g.g, a plot) or the code (e.g., how you are sampling SOWs) adds value to the discussion.
-You may have multiple subsections of results, which you can create using `##`.
+The hazard model for storm surges is represented by an Extreme Value Distribution (EVD) with parameters fitted to the available data of the gauge. Similar work has been done using NOAA data, for example, Buchanan et al. recommend using a Generalized Pareto Distribution with in the extreme value analysis @buchanan_allowances_2016. There are different approaches that could be used as hazard model including stochastic simulation, existing models (e.g. ADCIRC+SWAN) or a worst-case scenario. Nevertheless, the uncertainty in the surges above the MSL are sampled from the EVD randomly. To that end, maximum and mean sea levels for the Pier 21 gauge are used. The surge data per year to be assigned to the state variable correspond to the year-maximum level over the MSL. The available data contains 1288 records from 1914 to the date. The MSL is subtracted from the highest datum in ft, and the year maximum to represent the year surge. The package Extremes.jl and the function gevfit are used to fit the GEV parameters. For the year maximum surge, the parameters are found to be μ=2.59, σ=0.51 and ξ=0.38. Figure 3 show the maximum surge per year and the fitted GEV distribution and  shows the record from 1914 where is clear the linear trend of sea level rise in Galveston. The largest peaks in the record correspond to past hurricane events including the 1915 Galveston hurricane and 1963 Cindy.
 
-# Conclusions
+```{julia}
+#| code-fold: true
+water_max = CSV.read("8771450_max_year.csv",DataFrame)
+let 
+    p = plot(water_max.Year,
+             water_max.MaxtoMLS;
+             xlabel = "Year",
+             ylabel = "Water elevation (ft)",
+             label = "Maximum year surge",
+             legend = :topright,
+             color = "dodgerblue4",
+             linewidth = 1,)
+    hline!([offset]; color = "orangered", linewidth = 1, label = "Gauge offset", style = :dash)
+    p
+end
+```
 
-## Discussion
+```{julia}
+#| code-fold: true
+θ = gevfit(water_max, :LevelMaxYear).θ̂
+let
+    μ = θ[1]
+    σ = exp(θ[2])
+    ξ = θ[3]
+    
+    p = plot()
+    plot!(p,GeneralizedExtremeValue(μ, σ, ξ);
+        xlabel = "Water level (ft)",
+        ylabel = "Probability density",
+        ylims = [0,0.80],
+        xlims = [0,10],
+        label = "GEV distribution μ = $(round(μ, digits = 2)), σ = $(round(σ, digits = 2)), ξ = $(round(ξ, digits = 2))",
+        legend = :topright,
+        size = (500, 400),
+        color = "teal",
+        linewidth = 1,)
+    vline!([offset]; color = "orangered", linewidth = 1, label = "Gauge offset", style = :dash)
+end
+```
+```{julia}
+function draw_surge_distribution()
+    μ = θ[1]
+    σ = exp(θ[2])
+    ξ = θ[3]
+    GeneralizedExtremeValue(μ, σ, ξ)
+end
+```
+## Discount rate
 
-Analyze the implications of your results for climate risk management.
-Consider the context of the class themes and discuss how your findings contribute to the understanding of climate risk assessment.
-Identify any limitations of your approach and suggest potential improvements for future work.
+The discount rate (DR) has been found to be very impactful to the discounted cashflows in the future. There is no information or time histories of financial data to be able to model a future behavior. There are no enough arguments to choose a number over other for industrial warehouses in the Galveston port. Nevertheless, in order to capture the uncertain behavior two discount rate scenarios are considered for the state of the world (SOW) of the simulations. The first is a low DR of 3.0% (low respect to the cost of opportunity of an industrial facility) and high DR of 7.0%, relative to the 3%. The exploratory nature of the analysis allows to simulate the effect of the DR and support decision making.
 
-## Conclusions
+```{julia}
+function draw_discount_rate(level)
+    if level == "low"
+        d_rate = 0.03
+    elseif level == "high"
+        d_rate = 0.07
+    end
+    return d_rate
+end
+draw_discount_rate("high")
+```
+## Time horizons
 
-Summarize the key findings of your project and reiterate the significance of your implemented feature in addressing the problem statement.
-Discuss the broader implications of your work for climate risk management and the potential for further research in this area.
+The time frame is also uncertain and very impactful in terms of cost-benefit analysis. Most buildings nowadays are design to life spans of 50 years to 100 years. Nevertheless, some project horizons (and in particular for an industrial facility) can be much lower (e.g. 10 to 20 years). Therefore, two SOW’s are proposed to explore the effect of the time frame. A short 25-year and a long 50-year horizons are proposed. The consequences are very sensitive in terms of the SLR model that is non-linear in time. As seen in Figure 2a, the considerable number of SLR scenarios have an MSL above a 4-ft offset, that is, regardless of the surge, the building would experience flooding.
+
+```{julia}
+#| output: false
+timeframe_25 = ModelParams(; house = building,
+                  years = 2024:2024+25)
+timeframe_50 = ModelParams(; house = building,
+                  years = 2024:2024+50)
+```
+# Adaptive policies
+
+Two decision profiles (three consider the Do-nothing profile) are considered in the present analysis. A cost-benefit analysis (CBA) will be used to compare the results of each profile i in terms of the net present value (NPV) of the utility function $u()$.
+
+$NPV^i=\frac{1}{N}\sum_{n}^{N}\sum_{t=0}^{T}u(s_n,a_{t}^{i},\mathbf{x}_t)(1-\gamma_n)^t$
+
+Where $N$ are the number of Monte Carlo simulations that allow for capturing an average behavior, $T$ is the time horizon, $s$ is the SOW (e.g. surge sampling) of the n simulation, $a_{t}^{i}$  is the i-th policy profile elevation action in the time $t$, $\mathbf{x}_t$ is the state variable that updates every year (e.g. max year level, building elevation) and $\gamma_n$  is the discount rate of the n-SOW simulation. Given that the policies trigger the action according to the state variable, two variables define the simulation: a triggering event and an elevation quantity.
+
+For the proactive profile, the triggering event is associated with the free-board distance Δ, that is, the level difference between the MSL and the inundation level of the building that is calculated for every time step t. It is considered proactive given that it is independent of a surge event. The reactive profile, in contrast, have a triggering event dependent of a surge level and a given maximum water level threshold Lmax that represents a flood event in itself. The amount of elevation is the second variable per profile. Some fixed values are shown in Table 1 to illustrate the different profiles according to a qualitative risk aversion metric.
+
+![Table 1](Table1.png)
+
+```{julia}
+mp = timeframe_50
+sows = let
+    N_SOW = 10_000
+    sows = [SOW(rand(slr_scenarios),
+            draw_surge_distribution(),
+            draw_discount_rate("low")) for _ in 1:N_SOW]
+end         
+function objective_function_Pro(a::Vector{Float64})
+    elev = a[1]
+    elev = Action((elev)u"ft")
+    delta = a[2]
+    NPV = [simulate(s,elev,mp,ProactivePolicy(delta)) for s in sows]./1e6
+    return mean(NPV)
+end
+function objective_function_Re(a::Vector{Float64})
+    elev = a[1]
+    elev = Action((elev)u"ft")
+    level = a[2]
+    NPV = [simulate(s,elev,mp,ReactivePolicy(level)) for s in sows]./1e6
+    return mean(NPV)
+end
+
+[objective_function_Pro([8.0,3.0]) , objective_function_Re([8.0,2.0])]
+```
+## Code implementation
+
+The class code has been modified for allowing sequential decision making, state variables, time-step simulation, and simulation. The overall code structure was based on the sequential lab for the Garage building. The building state variable was defined in core.jl as follows:
+
+```default
+# BuildingState x is a state variable that saves each time step information
+mutable struct BuildingState{T<:AbstractFloat}
+    elevation::T
+    year::Int
+    MSL::T
+    Damage::T
+    max_level::T
+end
+
+# The function is inicialized in zeros except for the year in 1
+function BuildingState()
+    return BuildingState(0.0, 1, 0.0, 0.0, 0.0)
+end
+
+```
+The building action and adaptive policies were also defined in core.jl
+
+```default
+# The building action is an elevation increment Δ
+struct BuildingAction
+    Δelevation::AbstractFloat
+end
+
+# Two types of abstract policies are defined
+abstract type AbstractPolicy end
+# The proactive policy uses a Free-board distance to trigger a decision sequence
+struct ProactivePolicy <: AbstractPolicy
+    delta_min::AbstractFloat
+end
+# The reactive policy uses a year maximum water level to trigger a decision sequence
+struct ReactivePolicy <: AbstractPolicy
+    critical_level::AbstractFloat
+end
+```
+The policy functions were defined in run_sim.jl
+
+```default
+# The proactive function triggers an elevation action only if the freboard distance Δ is surpass
+function get_ProactiveAction(x::BuildingState, policy::ProactivePolicy, a::Action)
+    if (x.elevation - x.MSL) < policy.delta_min
+        return BuildingAction(a.Δh_ft)
+    else
+        return BuildingAction(0)
+    end
+    
+end
+
+# The proactive function triggers an elevation action only if the maximum level threshold Lmax is surpass
+function get_ReactiveAction(x::BuildingState, policy::ReactivePolicy, a::Action)
+    if x.max_level > policy.critical_level
+        return BuildingAction(a.Δh_ft)
+    else
+        return BuildingAction(0)
+    end
+    
+end
+```
+The time step function was defined to estimates annual losses based on the maxim year surge
+
+```default
+# One time step in the sequential decision siluation
+function run_timestep(
+    x::BuildingState, sow::SOW, a::Action, p::ModelParams, policy::T
+) where {T<:AbstractPolicy}
+
+    # Initial level of the building
+    if x.year == 1
+        x.elevation = p.house.height_above_gauge_ft
+    end
+
+    # Mean sea level from the SLR model
+    x.MSL = sow.slr(p.years[x.year])
+
+    # Set the elevation action according to a policy
+    if policy isa ProactivePolicy
+        Δ = get_ProactiveAction(x, policy, a)
+    elseif policy isa ReactivePolicy
+        Δ = get_ReactiveAction(x, policy, a)
+    end
+
+    # Estimates the construction cost of the elevation action
+    construction_cost = elevation_cost(p.house, Δ.Δelevation)
+
+    # Change the elevation state of the building
+    x.elevation += Δ.Δelevation
+
+    # Calculate the maximum yearly level or year flood event
+    x.max_level = rand(sow.surge_dist) + x.MSL - x.elevation - Δ.Δelevation
+    # Estimates the building damages and losses
+    damages_year = p.house.ddf(x.max_level)/100
+    x.Damage = damages_year
+    EAD = x.Damage * p.house.value_usd
+    # The year cost cashflow is the sum of the construction losses costs
+    cost = EAD + construction_cost
+    
+    return cost
+end
+```
+The simulation of the T years is defined as follows:
+
+```default
+function simulate(sow::SOW, a::Action, p::ModelParams, policy::T) where {T<:AbstractPolicy}
+
+    # initialize the model
+    x = BuildingState()
+    
+    # Calculate the year cashflow
+    years = collect(1:size(p.years)[1])
+    costs = map(years) do year
+        x.year = year
+        run_timestep(x, sow, a, p, policy)
+    end
+
+    # Calculate the net present value of the simullation
+    discount_weights = @. (1 - sow.discount_rate)^(years - 1)
+    npv = sum(costs .* discount_weights)
+    npv_millions = npv
+
+    return npv_millions
+end
+```
+## Monte Carlo simulations analysis
+
+The first parameter to calibrate is the number of simulations to performed. Given that each simulation is sampling a maximum year surge, each simulation yields very different NPV. This differ with the case in which Monte Carlo simulations were performed within each time step. In order to capture the maximum year surge, this averaging process is no possible. One limitation, therefore, is assumed only one flood event per year. The Figure 5 shows how the average of the mean NPV is converging with the increasing number of simulations. This number determine whether or not an optimization routine if computationally cost effective. After 1,000 simulations the model varies the results in "±" 50,000 US dollars and after 10,000 simulations the difference is almost negligible. For 100,000 simulation there is complete visual convergence but this number of simulations would be prohibited for optimization purposes. The simulations represent a proactive policy with a free-board distance of 3 ft and an elevation action of 3 ft, DR of 7.0% and 50-year horizon. For example, using 10,000 simulation and a sample space of different triggering events, elevation actions, and time frames, the same convergence behavior is observed.
+
+```{julia}
+#| code-fold: true
+let 
+    N_samples = 100_000
+    sim = map(1:N_samples) do year
+        s = SOW(rand(slr_scenarios),
+                    draw_surge_distribution(),
+                    draw_discount_rate("high"))
+        a = Action((3)u"ft")
+        mp = timeframe_50
+        policy = ProactivePolicy(3)
+        simulate(s,a,mp,policy)
+    end
+    NPV_avg = zeros(N_samples)
+    for n in 1:N_samples
+        NPV_avg[n] = sum(sim[1:n])/n
+    end
+    plot(NPV_avg./1e6;
+        xlabel = "# SOW's",
+        xticks = ([1,10,100,1000,10000,100000]),
+        xaxis = :log,
+        ylabel = "Mean NPV [US Millions]",
+        label = "DR: 7%, Timeframe: 50 years, Proactive policy [a:3 ft,Δ:3 ft]",
+        legend = :bottomright,
+        size = (500, 400),
+        color = "dodgerblue4",
+        linewidth = 1,)
+end
+```
+# Sequential decision analysis
+
+The state variable behavior is analyzed by sampling some simulations and plotting the year variables. Figure 6a shows 10 simulations for the proactive policy for 50-year horizon, high DR, 3 ft free-board and 4 ft action policy and 4 ft of offset. This means that if there is a year with a MSL of 1 ft (4ftoffset – 3ftΔ) a 4 ft elevation takes place. For high sea-level scenarios, the action happens rather quick (less than 10 years) but most of elevation actions happens in the 25 to 40 year. The simulations show damages for large surges given that the free-board is measure for the MSL not the maximum level that is unknown apriori. For extreme SLR scenarios, this profile elevates the building twice (one in the 6th year and again in the 48th year), however most elevation actions take place once.
+
+In contrast, Figure 6b presents the reactive policy for same T and DR, but for a 3 ft elevation action and a Lmax of 2-ft. This means that after a year with a flood depth of 2 or more ft, the policy triggers an elevation of 3 ft. More action events are expected since they depend on the surges and not the seal level.
+
+![Figure 6a](Figure6a.png)
+
+![Figure 6b](Figure6b.png)
+
+
+## Brute force optimization
+
+The problem is set as a bivariate optimization, that is, the two variables are optimize, the triggering event (free-board or maximum water level) and the amount of elevation. The first approach is a Brute Force exploration optimization for a set of fixed decision policies. For the proactive and reactive policies, a discrete set of [1 – 10 ft] in single feet increment (10 alternatives) was used for Δ and Lmax, respectively. The sample space for elevation actions was 0 to 10 ft in a 2 ft increment (6 alternatives). The number of simulations was set in 10,000. Figure 7 shows how the average NPV changes for the different decision profiles, T and DR. Large DR decrease the present value of future damages (Figure 7a,b) therefore elevation actions are less cost-effective, this is particularly true for large time horizons that can be heavily impacted by the SLR. This is evident for low DR, where risk averse triggered events are cost-effective for a large time window but led to higher than Do-nothing NPV for short time frames (Figure 7c,d).
+
+The initial offset of the building is a key parameter as well to make decisions of elevation. The brute force simulation was performed for buildings with 2 ft and 6 ft offset respect to the gauge. Figure 8 show the mean NPV for the least and most action prone scenarios, i.e. 25 year/7% and 50 year/3%, respectively, for the 2 ft and 6 ft offset buildings. For the former, having 2 to 4 ft of free-board le to optimal decisions for 6-8 ft elevation action range regardless of the T/DR. In contrast, for a 6 ft offset building, the do-nothing decision profile is virtually optimal for all scenarios. 
+
+![Figure 8](Figure8.png)
+
+Regarding the decision profile policies, the proactive attitude can lead to higher NPV for risk averse triggering events (i.e. large free-board), however, for small free-board distances and for action prone scenarios (i.e. long-term analysis and low discount rate), the proactive policy yield to optimal decision making and minimize the NPV. The reactive policy in general lead to results with lower variability. This policy behavior is illustrated in Figure 9.
+
+```{julia}
+#| code-fold: true
+x1_pro = [0, 2, 4, 6, 8, 10.0]
+x2_pro = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10.0]
+z_pro = [objective_function_Pro([a,d]) for a in x1_pro, d in x2_pro]
+let
+    P1 = plot(x1_pro,x2_pro,transpose(z_pro);
+            st = :contourf,
+            xlabel = "Elevation action[ft]",
+            ylabel = "Free-Board Δ [ft]",
+            zlabel = "Mean NPV [USD Millions]",
+            label = "Proactive policy",
+            legend = :outerbottom,
+            color = :balance,)
+
+    P2 = plot(x1_pro,x2_pro,transpose(z_pro);
+            st = :surface,
+            xlabel = "a",
+            ylabel = "Δ",
+            zlabel = "NPV",
+            color = :balance,
+            cbar = false,
+            grid = true,
+            )
+    plot(P1,P2, layout = (1,2), size = (700,400))
+end
+```
+```{julia}
+#| code-fold: true
+x1_re = [0, 2, 4, 6, 8, 10.0]
+x2_re = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10.0]
+z_re = [objective_function_Re([a,e]) for a in x1_re, e in x2_re]
+let
+    P1 = plot(x1_re,x2_re,transpose(z_re);
+            st = :contourf,
+            xlabel = "Elevation action [ft]",
+            ylabel = "Max level [ft]",
+            zlabel = "Mean NPV [USD Millions]",
+            label = "Reactive policy",
+            legend = :outerbottom,
+            color = :balance,)
+
+    P2 = plot(x1_re,x2_re,transpose(z_re);
+            st = :surface,
+            xlabel = "a",
+            ylabel = "Lmax",
+            zlabel = "NPV",
+            color = :balance,
+            cbar = false,
+            grid = true)
+    plot(P1,P2, layout = (1,2), size = (700,400))
+end
+```
+```{julia}
+#| code-fold: true
+let
+    pl = plot(;xlabel = "Elevation action[ft]",
+                xticks = (0:2:10),
+                ylabel = "Mean NPV [US Million]",
+                size = (500, 400),
+                linewidth = 1,
+                legend = :topright,)
+    for level in 1:size(x2_re)[1]
+        if level == 1
+        plot!(pl,x1_re,transpose(z_re)[level,:]; 
+                label = "Reactive policy",
+                xlabel = "Elevation",
+                color = "orangered",
+                alpha = 0.50,
+                )
+        else
+        plot!(pl,x1_re,transpose(z_re)[level,:]; 
+                label = nothing,
+                xlabel = "Elevation",
+                color = "orangered",
+                alpha = 0.50,
+                )
+        end
+    end
+    for delta in 1:size(x2_pro)[1]
+        if delta == 1
+        plot!(pl,x1_pro,transpose(z_pro)[delta,:]; 
+                label = "Proactive policy",
+                color = "dodgerblue4",
+                alpha = 0.50,
+                )
+        else
+        plot!(pl,x1_pro,transpose(z_pro)[delta,:]; 
+                label = nothing,
+                color = "dodgerblue4",
+                alpha = 0.50,
+                )
+        end
+    end
+    pl
+end
+```
+
+## Heuristics optimization
+
+In order to implement an optimization routine, two objective (bivariate) functions are define for the proactive and reactive decision profiles, respectively. The same optimization algorithm and routine options used in past labs is used. The time limit was analyzed as follows for 10,000 simulations. A short, 60 second limit yield to optimal results considering the discrete nature of the problem. T shows the result for a 4 ft offset building optimization.
+
+![Table 2](Table2.png)
+
+```{julia}
+Random.seed!(2024)
+options = Options(; time_limit = 60.0, f_tol_rel = 1e-3)
+bounds = boxconstraints( lb = [0.0,0.0], ub = [14.0,14.0])
+algorithm = ECA(; options = options)
+result_pro = optimize(objective_function_Pro, bounds,algorithm)
+result_re = optimize(objective_function_Re, bounds,algorithm)
+print(result_pro)
+print(result_re)
+```
+# Conclusion
+
+Sequential decision framework allows for add flexibility to, in this case, an elevation problem considering storm surges. The space of possibilities can grow quickly by incorporate uncertainty. Nevertheless, some of them can be handle by decision makers preferences, in particular, financial parameters such as the discount rate and the time horizon. Consider sea level rise adds complexity to the simulation given the number of realizations that are possible. The analysis shows that there are optimal decisions that minimize expected cashflows in the life span of the building. For a proactive profile, having a free-board distance to trigger an elevation action could yield in important “savings” in damages and losses due to hurricane surges. Another possible attitude, a reactive one, can also take the decision based on a threshold or flood level tolerance. As show in this work, the elevation action can take place in different moments of the time frame but using a Monte Carlo simulation is possible to get a rough mean estimate that allow for comparison between profiles and different state of the world. When compare to a static profile, that is, upfront decision making for elevation, the sequential decision can result in actions that are more cost-effective from a cost-benefit analysis perspective. F compares the results obtained in previous class labs (static upfront decision) with two scenarios. For a 50-year and 3% discount ratio, all models seem to indicate that an eight feet elevation should take place to satisfy free-boards, maximum year levels and minimize the NPV. When using a less attractive financial scenario, 50-year but 7% discount ratio, the upfront decision would be not to elevate the building. In contrast the adaptive policy presents a policy to reduce the expected NPV by having a 3 ft free-board Δ and a 7 ft Lmax for proactive and reactive policies, respectively. Same results, yet more precise were obtained through heuristic optimization (see Table 2). The question on when to elevate is not directly answer, but a proactive policy yields better results than a reactive one, that for the example has to withstand one major flood event (7 ft flood) in order to act. 
+
+```{julia}
+#| code-fold: true
+sows = let
+    N_SOW = 1000
+    sows = [SOW(rand(slr_scenarios),
+            draw_surge_distribution(),
+            draw_discount_rate("low")) for _ in 1:N_SOW]
+end
+
+mp = timeframe_50
+function objective_function(a::Vector{Float64})
+    a = a[1]
+    a = Action((a)u"ft")
+    NPV = -[run_sim(a, s, mp) for s in sows]./1e6
+    return mean(NPV)
+end
+```
+```{julia}
+#| code-fold: true
+let 
+    elevations = 0.0:14.0
+    NPVs = [objective_function([e]) for e in elevations]
+    p = plot(elevations, NPVs;
+            xlabel = "Elevation action (ft)",
+            ylabel = "Mean NPV (US Millions)",
+            ylims = [1,trunc(maximum(NPVs)) + 1],
+            xlims = [0,10],
+            label = "Static policy",
+            legend = :topright,
+            size = (500, 400),
+            color = "teal",
+            linewidth = 1,
+            markershape = :circle,
+            markercolor = "black",
+            markersize = 3)
+    plot!(p, x1_pro, z_pro[:,4],
+        #label = "Proactive policy Δ = 3 ft",
+        label = "Proactive policy Δ = 4 ft",
+        color = "dodgerblue4",
+        markershape = :circle,
+        markercolor = "black",
+        linewidth = 1,
+        markersize = 3)
+    plot!(p, x1_re, z_re[:,1],
+        #label = "Reactive policy Lmax = 7 ft",
+        label = "Reactive policy Lmax = 1 ft",
+        color = "orangered",
+        markershape = :circle,
+        markercolor = "black",
+        linewidth = 1,
+        markersize = 3)
+    vline!([[findall(x-> x == minimum(NPVs), NPVs)][1]-[1]]; label = "Minimum",linewidth = 1, color = "teal", style = :dash)
+    vline!([8]; label = "Minimum",linewidth = 1, color = "dodgerblue4", style = :dash)
+    vline!([8]; label = "Minimum",linewidth = 1, color = "orangered", style = :dash)
+    p
+end
+```
+
+## Discussion and further work
+
+Using exploratory modeling is very useful to incorporate many variables to simulation. Instead of working on the deterministic most realistic analysis, this methodology uses the uncertainties and different possible futures to inform and support decision making. In the context of climate risk management, this methodology and tools are more relevant than ever considering the extreme climate and its variations due to climate change. It also relevant considering the dynamics and assets and people at risk. In the case of elevation houses or buildings to minimize flooding and storm surge, exploratory modeling, optimization, policy search, and scenario modeling are necessary to answer as much “what if?”, “how much?” and “when?” as possible considering several sources of uncertainty. The present work is just a small application of sequential or time dependent analysis where variables and their states change in time. For many cities, the sea level, the riverine behavior, the rain patterns, and other methodological variables are changing. Additionally, extremes are completely random in nature. Incorporating the quantitative measurements of intensities is relevant and in time. Therefore, forecasting allows to understand and simulate different scenarios and adaptive policies could inform different action sequences or parameters. 
+The limitations of this work are in the number and quality of uncertainty management of the different variables: physical, financial, climate-related, as well as the assumptions in the model, for example, sampling one maximum level per year, neglecting hydrological behavior, event duration, damage progression, among others. Nevertheless, the present work helps to get closer to a policy that could define elevation heights and parameter that support those decisions, for example, following the sea level rise and trigger action if a given level is finally reached.
 
 # References
 

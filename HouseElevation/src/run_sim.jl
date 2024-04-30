@@ -40,3 +40,81 @@ function run_sim(a::Action, sow::SOW, p::ModelParams)
     ead_npv = sum(eads .* discount_fracs)
     return -(ead_npv + construction_cost)
 end
+
+# The proactive function triggers an elevation action only if the freboard distance Δ is surpass
+function get_ProactiveAction(x::BuildingState, policy::ProactivePolicy, a::Action)
+    if (x.elevation - x.MSL) < policy.delta_min
+        return BuildingAction(a.Δh_ft)
+    else
+        return BuildingAction(0)
+    end
+    
+end
+
+# The proactive function triggers an elevation action only if the maximum level threshold Lmax is surpass
+function get_ReactiveAction(x::BuildingState, policy::ReactivePolicy, a::Action)
+    if x.max_level > policy.critical_level
+        return BuildingAction(a.Δh_ft)
+    else
+        return BuildingAction(0)
+    end
+    
+end
+
+# One time step in the sequential decision siluation
+function run_timestep(
+    x::BuildingState, sow::SOW, a::Action, p::ModelParams, policy::T
+) where {T<:AbstractPolicy}
+
+    # Initial level of the building
+    if x.year == 1
+        x.elevation = p.house.height_above_gauge_ft
+    end
+
+    # Mean sea level from the SLR model
+    x.MSL = sow.slr(p.years[x.year])
+
+    # Set the elevation action according to a policy
+    if policy isa ProactivePolicy
+        Δ = get_ProactiveAction(x, policy, a)
+    elseif policy isa ReactivePolicy
+        Δ = get_ReactiveAction(x, policy, a)
+    end
+
+    # Estimates the construction cost of the elevation action
+    construction_cost = elevation_cost(p.house, Δ.Δelevation)
+
+    # Change the elevation state of the building
+    x.elevation += Δ.Δelevation
+
+    # Calculate the maximum yearly level or year flood event
+    x.max_level = rand(sow.surge_dist) + x.MSL - x.elevation - Δ.Δelevation
+    # Estimates the building damages and losses
+    damages_year = p.house.ddf(x.max_level)/100
+    x.Damage = damages_year
+    EAD = x.Damage * p.house.value_usd
+    # The year cost cashflow is the sum of the construction losses costs
+    cost = EAD + construction_cost
+    
+    return cost
+end
+
+function simulate(sow::SOW, a::Action, p::ModelParams, policy::T) where {T<:AbstractPolicy}
+
+    # initialize the model
+    x = BuildingState()
+    
+    # Calculate the year cashflow
+    years = collect(1:size(p.years)[1])
+    costs = map(years) do year
+        x.year = year
+        run_timestep(x, sow, a, p, policy)
+    end
+
+    # Calculate the net present value of the simullation
+    discount_weights = @. (1 - sow.discount_rate)^(years - 1)
+    npv = sum(costs .* discount_weights)
+    npv_millions = npv
+
+    return npv_millions
+end
